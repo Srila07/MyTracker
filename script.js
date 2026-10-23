@@ -42,6 +42,14 @@ const inWk=r=>wk().includes(r.date);
 const sorted=a=>[...a].sort((x,y)=>(x.date||'').localeCompare(y.date||''));
 const match=r=>!q||JSON.stringify(r).toLowerCase().includes(q.toLowerCase());
 
+/* ---------- weekly report: one summary row for EVERY week that has records (built from saved data, never deleted) ---------- */
+function weekly(){
+  const ms=[...new Set([...db.diet,...db.study,...db.eng].map(r=>r.date).filter(Boolean).map(d=>week(d)[0]))].sort();
+  return ms.map(m=>{const W=week(m),f=a=>a.filter(r=>W.includes(r.date)),s=f(db.study),d=f(db.diet),e=f(db.eng),k=sorted(d.filter(r=>r.kg));
+    return{wk:m,hours:+(sum(s,mins)/60).toFixed(1),solved:sum(s,r=>r.solved),topics:s.filter(r=>r.st==='Completed').length,prot:d.length?Math.round(sum(d,prot)/d.length):0,kg:k.length?+k[k.length-1].kg:null,eng:sum(e,r=>r.min)}});
+}
+const weeklyHtml=()=>{const w=weekly();return`<div class="card"><div class="tools"><h3>📈 Weekly report (all weeks)</h3><button class="b" data-a="wcsv">⬇ Weekly report CSV</button></div><div class="wrap"><table><tr><th>Week starting (Mon)</th><th>Study hours</th><th>Programs solved</th><th>Topics completed</th><th>Avg protein/day (g)</th><th>Latest weight (kg)</th><th>English min</th></tr>${w.map(r=>`<tr><td style="padding:6px">${r.wk}</td><td>${r.hours}</td><td>${r.solved}</td><td>${r.topics}</td><td>${r.prot}</td><td>${r.kg??'—'}</td><td>${r.eng}</td></tr>`).join('')}</table></div>${w.length?'':'<p class="empty">🌸 Your weekly report appears here once you add records.</p>'}</div><div class="grid">${cv('wh')}${cv('wsv')}${cv('wpr')}${cv('ww')}${cv('wen')}</div>`};
+
 /* ---------- editable table ---------- */
 function cell(key,col,r){
   const[k,l,t,x]=col,v=r[k]??'',at=`data-t="${key}" data-i="${r.id}" data-k="${k}"`;
@@ -85,7 +93,7 @@ hist(){
   const m=r=>(r.date||'').startsWith(mo),s=db.study.filter(m),d=db.diet.filter(m),k=sorted(d.filter(x=>x.kg));
   return`<h1>${TITLES.hist}</h1><div class="card tools"><label>Month <input type="month" id="mo" value="${mo}"></label><button class="b" data-a="exp">⬇ Export JSON backup</button><label>Import JSON <input type="file" id="imp" accept=".json"></label><button class="b" data-a="rst">♻️ Reset all</button></div>
   <div class="grid">${card('Study hours',(sum(s,mins)/60).toFixed(1)+' h')}${card('Programs solved',sum(s,r=>r.solved))}${card('Days with diet record',d.length)}${card('Avg protein / day',d.length?Math.round(sum(d,prot)/d.length)+' g':'—')}${card('Weight change (measured)',k.length>1?(k[k.length-1].kg-k[0].kg).toFixed(1)+' kg':'need 2+ weights')}${card('English minutes',sum(db.eng.filter(m),r=>r.min))}${card('Tests this month',db.tests.filter(m).length)}</div>
-  <p class="card">ℹ️ Your records are saved only in <b>this browser on this device</b>. Export a backup regularly. For phone + laptop sync you would need a cloud database with login.</p>`;
+  ${weeklyHtml()}<p class="card">ℹ️ Your records are saved only in <b>this browser on this device</b>. Export a backup regularly. For phone + laptop sync you would need a cloud database with login.</p>`;
 }};
 
 /* ---------- charts ---------- */
@@ -106,6 +114,12 @@ function draw(){
   mk('csu','bar',n,[{label:'Learned %',data:n.map(x=>{const a=db.subj.filter(r=>r.subject===x);return pct(a.filter(r=>r.st==='Learned').length,a.length)})}],'Subject completion','%');
   mk('ce','bar',L,[{label:'Minutes',data:by(db.eng,r=>r.min)}],'English practice this week','minutes');
   const t=sorted(db.tests);mk('ct','bar',t.map(r=>r.date+' '+(r.kind||'').replace('Monthly ','')),[{label:'Score',data:t.map(r=>+r.score)}],'Monthly test scores','/100');
+  const wr=weekly(),WL=wr.map(r=>r.wk);
+  mk('wh','bar',WL,[{label:'Hours',data:wr.map(r=>r.hours)}],'Study hours — every week','hours');
+  mk('wsv','bar',WL,[{label:'Solved',data:wr.map(r=>r.solved)},{label:'Topics completed',data:wr.map(r=>r.topics)}],'Programs solved & topics — every week','count');
+  mk('wpr','bar',WL,[{label:'Avg protein',data:wr.map(r=>r.prot)}],'Average daily protein — every week','grams');
+  mk('ww','line',WL,[{label:'Weight',data:wr.map(r=>r.kg)}],'Weight at end of each week (measured)','kg');
+  mk('wen','bar',WL,[{label:'Minutes',data:wr.map(r=>r.eng)}],'English practice — every week','minutes');
 }
 
 /* ---------- render (keeps keyboard focus after redraw) ---------- */
@@ -141,6 +155,7 @@ document.addEventListener('click',e=>{
   else if(a==='addsub'){const n=prompt('Subject name?');if(n&&n.trim()){db.subj.push({...nr('subj'),subject:n.trim(),unit:'1'});save();render()}}
   else if(a==='del'){if(confirm('Permanently delete this record?')){db[k]=db[k].filter(x=>x.id!==i);save();render()}}
   else if(a==='csv'){const c=T[k].c,v=r=>'"'+String(r??'').replace(/"/g,'""')+'"';download(c.map(x=>v(x[1])).join(',')+'\n'+db[k].map(r=>c.map(x=>v(x[2]==='f'?x[3](r):r[x[0]])).join(',')).join('\n'),k+'.csv','text/csv')}
+  else if(a==='wcsv'){const v=x=>'"'+x+'"';download(['Week start,Study hours,Programs solved,Topics completed,Avg protein/day,Latest weight kg,English min',...weekly().map(r=>[r.wk,r.hours,r.solved,r.topics,r.prot,r.kg??'',r.eng].map(v).join(','))].join('\n'),'weekly-report.csv','text/csv')}
   else if(a==='exp')download(JSON.stringify(db,null,2),'planner-backup-'+today()+'.json','application/json');
   else if(a==='rst'&&confirm('Erase ALL records? Export a backup first!')){db={diet:[],study:[],subj:[],eng:[],tests:[]};save();render()}
 });
